@@ -1,0 +1,23 @@
+# Piggle (Smart Study Assistant) - Project Requirements
+
+## Core Environment
+Node.js >= 18.0.0
+npm >= 9.0.0
+
+## Backend Dependencies (Node.js/Express)
+- express (^5.2.1)
+- cors (^2.8.6)
+- dotenv (^17.4.2)
+- firebase-admin (^13.8.0)
+
+## Frontend Dependencies (React)
+- react (^19.2.5)
+- react-dom (^19.2.5)
+- firebase (^12.12.1)
+- lucide-react (^1.14.0)
+- pdfjs-dist (^5.7.284)
+- react-scripts (5.0.1)
+
+## Environment Variables (.env)
+- OPENROUTER_API_KEY (Required for AI generation)
+- PORT (Optional, default 5000)
