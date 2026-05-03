@@ -1,61 +1,110 @@
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-// const admin = require("firebase-admin"); // Uncomment when Firestore is needed
 
 const app = express();
-const PORT = process.env.PORT || 5000;
-const FRONTEND_URL = process.env.FRONTEND_URL || "*";
+const PORT = Number(process.env.PORT) || 5000;
+const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS) || 25000;
+const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000;
+const RATE_LIMIT_MAX_REQUESTS =
+  Number(process.env.RATE_LIMIT_MAX_REQUESTS) || 20;
 
-app.use(
-  cors({
-    origin: FRONTEND_URL === "*" ? true : FRONTEND_URL,
-  })
-);
-app.use(express.json());
+const allowedOrigins = (process.env.FRONTEND_URL || "*")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean)
+  .map((origin) => origin.replace(/\/$/, ""));
 
-// Firebase / Firestore Setup (commented out)
-// To enable Firestore persistence:
-// 1. Download your service account key from Firebase Console
-// 2. Save it as backend/serviceAccountKey.json
-// 3. Uncomment the block below and the saveFlashcardSet call in the route
-//
-// admin.initializeApp({
-//   credential: admin.credential.cert(require("./serviceAccountKey.json")),
-// });
-//
-// const db = admin.firestore();
-//
-// async function saveFlashcardSet(cards) {
-//   const docRef = await db.collection("flashcard_history").add({
-//     cards,
-//     createdAt: admin.firestore.FieldValue.serverTimestamp(),
-//   });
-//   return docRef.id;
-// }
+const requestCounts = new Map();
 
-app.post("/api/generate-flashcards", async (req, res) => {
-  const { text, model: requestedModel } = req.body;
+function isOriginAllowed(origin) {
+  if (!origin) {
+    return true;
+  }
 
-  if (!text || text.trim().length === 0) {
+  if (allowedOrigins.includes("*")) {
+    return true;
+  }
+
+  return allowedOrigins.includes(origin.replace(/\/$/, ""));
+}
+
+function rateLimit(req, res, next) {
+  const now = Date.now();
+  const ip = req.ip || req.connection.remoteAddress || "unknown";
+  const current = requestCounts.get(ip);
+
+  if (!current || now - current.windowStart >= RATE_LIMIT_WINDOW_MS) {
+    requestCounts.set(ip, { count: 1, windowStart: now });
+    return next();
+  }
+
+  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
+    return res.status(429).json({
+      error: "Too many requests. Please wait a moment and try again.",
+    });
+  }
+
+  current.count += 1;
+  return next();
+}
+
+function validateGeneratePayload(req, res, next) {
+  const { text, model } = req.body ?? {};
+
+  if (typeof text !== "string" || text.trim().length === 0) {
     return res.status(400).json({ error: "Please provide study text." });
   }
 
-  const modelToUse = requestedModel || "google/gemini-2.0-flash-001";
+  if (text.length > 20_000) {
+    return res.status(400).json({
+      error: "Study text is too long. Please keep it under 20,000 characters.",
+    });
+  }
+
+  if (model && typeof model !== "string") {
+    return res.status(400).json({ error: "Model must be a string." });
+  }
+
+  return next();
+}
+
+function extractCardsFromContent(rawContent) {
+  const cleaned = rawContent.replace(/```json\s*|```\s*/gi, "").trim();
 
   try {
-    console.log(`Generating flashcards using model: ${modelToUse}`);
+    return JSON.parse(cleaned);
+  } catch (_primaryError) {
+    const arrayMatch = cleaned.match(/\[[\s\S]*\]/);
 
+    if (!arrayMatch) {
+      throw new Error("No JSON array found in model response.");
+    }
+
+    return JSON.parse(arrayMatch[0]);
+  }
+}
+
+async function requestFlashcards(text, model) {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error("Server is missing OPENROUTER_API_KEY.");
+  }
+
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  try {
     const aiResponse = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
       {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
         },
         body: JSON.stringify({
-          model: modelToUse,
+          model,
           messages: [
             {
               role: "system",
@@ -68,48 +117,127 @@ app.post("/api/generate-flashcards", async (req, res) => {
             },
           ],
         }),
+        signal: controller.signal,
       }
     );
 
     if (!aiResponse.ok) {
       const errBody = await aiResponse.text();
       console.error("OpenRouter error:", errBody);
-      return res
-        .status(502)
-        .json({ error: "Failed to reach the AI service." });
+      throw new Error("Failed to reach the AI service.");
     }
 
     const data = await aiResponse.json();
     const raw = data.choices?.[0]?.message?.content;
 
     if (!raw) {
-      return res.status(502).json({ error: "Empty response from the AI." });
+      throw new Error("Empty response from the AI.");
     }
 
-    let cards;
-    try {
-      const cleaned = raw.replace(/```json\n?|```\n?/g, "").trim();
-      cards = JSON.parse(cleaned);
-    } catch (parseErr) {
-      console.error("JSON parse error:", parseErr.message, "\nRaw:", raw);
-      return res.status(500).json({
-        error: "The AI returned malformed JSON. Please try again.",
-      });
+    const cards = extractCardsFromContent(raw);
+
+    if (!Array.isArray(cards) || cards.length === 0) {
+      throw new Error("AI did not return a valid flashcard list.");
     }
 
-    // saveFlashcardSet(cards).catch((err) =>
-    //   console.error("Firestore save error:", err.message)
-    // );
-
-    return res.json({ cards });
-  } catch (err) {
-    console.error("Server error:", err);
-    return res.status(500).json({ error: "Internal server error." });
+    return cards.filter(
+      (card) =>
+        card &&
+        typeof card.question === "string" &&
+        typeof card.answer === "string"
+    );
+  } finally {
+    clearTimeout(timeoutId);
   }
+}
+
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (isOriginAllowed(origin)) {
+        return callback(null, true);
+      }
+
+      return callback(new Error("CORS blocked for this origin."));
+    },
+  })
+);
+app.use(express.json({ limit: "1mb" }));
+
+app.get("/", (_req, res) => {
+  res.send("Smart Study Assistant API is running.");
 });
 
-app.get("/", (_req, res) => res.send("Smart Study Assistant API is running."));
+app.get("/health", (_req, res) => {
+  res.json({
+    status: "ok",
+    timestamp: new Date().toISOString(),
+    hasOpenRouterKey: Boolean(OPENROUTER_API_KEY),
+    allowedOrigins,
+  });
+});
 
-app.listen(PORT, () =>
-  console.log(`Server listening on http://localhost:${PORT}`)
+app.post(
+  "/api/generate-flashcards",
+  rateLimit,
+  validateGeneratePayload,
+  async (req, res) => {
+    const { text, model: requestedModel } = req.body;
+    const modelToUse = requestedModel || "google/gemini-2.0-flash-001";
+
+    try {
+      console.log(`Generating flashcards using model: ${modelToUse}`);
+      const cards = await requestFlashcards(text.trim(), modelToUse);
+
+      return res.json({ cards });
+    } catch (err) {
+      console.error("Server error:", err);
+
+      if (err.name === "AbortError") {
+        return res.status(504).json({
+          error: "The AI request timed out. Please try again in a moment.",
+        });
+      }
+
+      if (err.message === "Server is missing OPENROUTER_API_KEY.") {
+        return res.status(500).json({
+          error: "The server is missing its AI configuration.",
+        });
+      }
+
+      if (
+        err.message === "Failed to reach the AI service." ||
+        err.message === "Empty response from the AI."
+      ) {
+        return res.status(502).json({ error: err.message });
+      }
+
+      if (
+        err.message === "No JSON array found in model response." ||
+        err.message === "AI did not return a valid flashcard list."
+      ) {
+        return res.status(500).json({
+          error: "The AI returned an unexpected response. Please try again.",
+        });
+      }
+
+      return res.status(500).json({ error: "Internal server error." });
+    }
+  }
 );
+
+app.use((err, _req, res, _next) => {
+  if (err.message === "CORS blocked for this origin.") {
+    return res.status(403).json({
+      error:
+        "This website is not allowed to contact the API. Check FRONTEND_URL.",
+    });
+  }
+
+  console.error("Unhandled server error:", err);
+  return res.status(500).json({ error: "Internal server error." });
+});
+
+app.listen(PORT, () => {
+  console.log(`Server listening on http://localhost:${PORT}`);
+});

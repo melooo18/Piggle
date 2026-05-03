@@ -80,6 +80,11 @@ In Firebase Authentication settings:
 
 - add your deployed frontend domain to Authorized domains
 
+In Firestore:
+
+- publish rules from `firestore.rules`
+- make sure authenticated users can only read and write their own `userLibraries/{uid}` document
+
 Example:
 
 - `your-app.vercel.app`
@@ -101,3 +106,4 @@ Without this, Google sign-in and email auth can fail on production.
 - The frontend already falls back to `http://localhost:5000` for local development.
 - The backend uses `FRONTEND_URL` for CORS, so set it to your deployed frontend URL in production.
 - Firebase client config in the frontend is safe to expose publicly, but secrets like `OPENROUTER_API_KEY` must stay only on the backend.
+- Firestore is now used to sync `savedCards` and `studyHistory` across devices for each signed-in user.
