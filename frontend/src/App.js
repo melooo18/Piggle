@@ -10,6 +10,7 @@ import Login from "./Login";
 import "./App.css";
 
 
+
 // ── Icons ──
 import {
   LayoutDashboard,
@@ -23,7 +24,6 @@ import {
   Brain,
   ChevronRight,
   MousePointerClick,
-  Plus,
   BookOpen,
   Upload,
   FileText,
@@ -32,8 +32,30 @@ import {
   Moon
 } from "lucide-react";
 
+const API_BASE_URL =
+  process.env.REACT_APP_API_URL || "http://localhost:5000";
+
 // Set worker path for PDF.js (v5.x uses .mjs)
 pdfjsLib.GlobalWorkerOptions.workerSrc = `https://unpkg.com/pdfjs-dist@${pdfjsLib.version}/build/pdf.worker.min.mjs`;
+
+function getScopedStorageKey(baseKey, user) {
+  return user?.uid ? `${baseKey}:${user.uid}` : null;
+}
+
+function readScopedStorage(baseKey, user) {
+  const storageKey = getScopedStorageKey(baseKey, user);
+
+  if (!storageKey) {
+    return [];
+  }
+
+  try {
+    return JSON.parse(localStorage.getItem(storageKey) || "[]");
+  } catch (err) {
+    console.error(`Failed to read ${baseKey} from localStorage:`, err);
+    return [];
+  }
+}
 
 // ── Flashcard Component ──
 function Flashcard({ question, answer, index, onSave, isSaved }) {
@@ -100,13 +122,39 @@ function App() {
   const [selectedModel, setSelectedModel] = useState("google/gemini-2.0-flash-001");
   const [inputMethod, setInputMethod] = useState("type"); // 'type' or 'upload'
   const [fileName, setFileName] = useState("");
-  const [savedCards, setSavedCards] = useState(() => {
-    return JSON.parse(localStorage.getItem("saved_cards") || "[]");
-  });
+  const [savedCards, setSavedCards] = useState([]);
+  const [studyHistory, setStudyHistory] = useState([]);
 
   useEffect(() => {
-    localStorage.setItem("saved_cards", JSON.stringify(savedCards));
-  }, [savedCards]);
+    if (!user?.uid) {
+      setSavedCards([]);
+      setStudyHistory([]);
+      return;
+    }
+
+    setSavedCards(readScopedStorage("saved_cards", user));
+    setStudyHistory(readScopedStorage("study_history", user));
+  }, [user]);
+
+  useEffect(() => {
+    const storageKey = getScopedStorageKey("saved_cards", user);
+
+    if (!storageKey) {
+      return;
+    }
+
+    localStorage.setItem(storageKey, JSON.stringify(savedCards));
+  }, [savedCards, user]);
+
+  useEffect(() => {
+    const storageKey = getScopedStorageKey("study_history", user);
+
+    if (!storageKey) {
+      return;
+    }
+
+    localStorage.setItem(storageKey, JSON.stringify(studyHistory));
+  }, [studyHistory, user]);
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -186,6 +234,8 @@ function App() {
       setCards([]);
       setNotes("");
       setError("");
+      setSavedCards([]);
+      setStudyHistory([]);
     } catch (err) {
       console.error("Sign out error:", err);
     }
@@ -198,7 +248,7 @@ function App() {
     setCards([]);
 
     try {
-      const res = await fetch("http://localhost:5000/api/generate-flashcards", {
+      const res = await fetch(`${API_BASE_URL}/api/generate-flashcards`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ text: notes, model: selectedModel }),
@@ -209,8 +259,6 @@ function App() {
 
       setCards(data.cards);
 
-      // Save to local history
-      const history = JSON.parse(localStorage.getItem("study_history") || "[]");
       const newEntry = {
         id: Date.now(),
         title: notes.slice(0, 30) + (notes.length > 30 ? "..." : ""),
@@ -218,7 +266,7 @@ function App() {
         cards: data.cards,
         source: notes
       };
-      localStorage.setItem("study_history", JSON.stringify([newEntry, ...history]));
+      setStudyHistory((prev) => [newEntry, ...prev]);
 
     } catch (err) {
       setError(err.message);
@@ -354,7 +402,6 @@ function App() {
         );
 
       case "history":
-        const history = JSON.parse(localStorage.getItem("study_history") || "[]");
         return (
           <div className="animate-in">
             <div className="page-header">
@@ -362,9 +409,9 @@ function App() {
               <p>Review your previous generation sessions and saved materials.</p>
             </div>
 
-            {history.length > 0 ? (
+            {studyHistory.length > 0 ? (
               <div className="history-list">
-                {history.map((item) => (
+                {studyHistory.map((item) => (
                   <div key={item.id} className="history-item" onClick={() => {
                     setCards(item.cards);
                     setNotes(item.source);

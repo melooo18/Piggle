@@ -1,24 +1,24 @@
-// ─────────────────────────────────────────────────────────
-//  Smart Study Assistant — Backend (Express + OpenRouter)
-// ─────────────────────────────────────────────────────────
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
-// const admin = require("firebase-admin");  // ← Uncomment when Firestore is needed
+// const admin = require("firebase-admin"); // Uncomment when Firestore is needed
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+const FRONTEND_URL = process.env.FRONTEND_URL || "*";
 
-// ── Middleware ────────────────────────────────────────────
-app.use(cors());
+app.use(
+  cors({
+    origin: FRONTEND_URL === "*" ? true : FRONTEND_URL,
+  })
+);
 app.use(express.json());
 
-// ── Firebase / Firestore Setup (commented out) ───────────
+// Firebase / Firestore Setup (commented out)
 // To enable Firestore persistence:
-//   1. Download your service account key from Firebase Console
-//      → Project Settings → Service accounts → Generate new private key
-//   2. Save it as backend/serviceAccountKey.json
-//   3. Uncomment the block below and the saveFlashcardSet call in the route
+// 1. Download your service account key from Firebase Console
+// 2. Save it as backend/serviceAccountKey.json
+// 3. Uncomment the block below and the saveFlashcardSet call in the route
 //
 // admin.initializeApp({
 //   credential: admin.credential.cert(require("./serviceAccountKey.json")),
@@ -34,7 +34,6 @@ app.use(express.json());
 //   return docRef.id;
 // }
 
-// ── Routes ───────────────────────────────────────────────
 app.post("/api/generate-flashcards", async (req, res) => {
   const { text, model: requestedModel } = req.body;
 
@@ -44,9 +43,9 @@ app.post("/api/generate-flashcards", async (req, res) => {
 
   const modelToUse = requestedModel || "google/gemini-2.0-flash-001";
 
+  try {
     console.log(`Generating flashcards using model: ${modelToUse}`);
 
-    // 1. Call OpenRouter
     const aiResponse = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
       {
@@ -87,10 +86,8 @@ app.post("/api/generate-flashcards", async (req, res) => {
       return res.status(502).json({ error: "Empty response from the AI." });
     }
 
-    // 2. Parse the JSON array from the model output
     let cards;
     try {
-      // Strip potential markdown fences the model might still add
       const cleaned = raw.replace(/```json\n?|```\n?/g, "").trim();
       cards = JSON.parse(cleaned);
     } catch (parseErr) {
@@ -100,12 +97,10 @@ app.post("/api/generate-flashcards", async (req, res) => {
       });
     }
 
-    // 3. Persist to Firestore (commented out — uncomment when ready)
     // saveFlashcardSet(cards).catch((err) =>
     //   console.error("Firestore save error:", err.message)
     // );
 
-    // 4. Respond to the client
     return res.json({ cards });
   } catch (err) {
     console.error("Server error:", err);
@@ -113,10 +108,8 @@ app.post("/api/generate-flashcards", async (req, res) => {
   }
 });
 
-// ── Health check ─────────────────────────────────────────
 app.get("/", (_req, res) => res.send("Smart Study Assistant API is running."));
 
-// ── Start ────────────────────────────────────────────────
 app.listen(PORT, () =>
-  console.log(`✨ Server listening on http://localhost:${PORT}`)
+  console.log(`Server listening on http://localhost:${PORT}`)
 );
