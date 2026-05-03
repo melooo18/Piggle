@@ -5,6 +5,7 @@ const cors = require("cors");
 const app = express();
 const PORT = Number(process.env.PORT) || 5000;
 const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY;
+const GEMINI_API_KEY = process.env.GEMINI_API_KEY;
 const REQUEST_TIMEOUT_MS = Number(process.env.REQUEST_TIMEOUT_MS) || 25000;
 const RATE_LIMIT_WINDOW_MS = Number(process.env.RATE_LIMIT_WINDOW_MS) || 60_000;
 const RATE_LIMIT_MAX_REQUESTS =
@@ -86,15 +87,42 @@ function extractCardsFromContent(rawContent) {
   }
 }
 
-async function requestFlashcards(text, model) {
-  if (!OPENROUTER_API_KEY) {
-    throw new Error("Server is missing OPENROUTER_API_KEY.");
+function normalizeCards(cards) {
+  if (!Array.isArray(cards) || cards.length === 0) {
+    throw new Error("AI did not return a valid flashcard list.");
   }
 
+  const normalized = cards.filter(
+    (card) =>
+      card &&
+      typeof card.question === "string" &&
+      typeof card.answer === "string"
+  );
+
+  if (normalized.length === 0) {
+    throw new Error("AI did not return a valid flashcard list.");
+  }
+
+  return normalized;
+}
+
+async function withTimeout(requestFactory) {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
   try {
+    return await requestFactory(controller.signal);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function requestOpenRouterFlashcards(text, model) {
+  if (!OPENROUTER_API_KEY) {
+    throw new Error("OPENROUTER_KEY_MISSING");
+  }
+
+  return withTimeout(async (signal) => {
     const aiResponse = await fetch(
       "https://openrouter.ai/api/v1/chat/completions",
       {
@@ -117,37 +145,128 @@ async function requestFlashcards(text, model) {
             },
           ],
         }),
-        signal: controller.signal,
+        signal,
       }
     );
 
     if (!aiResponse.ok) {
       const errBody = await aiResponse.text();
       console.error("OpenRouter error:", errBody);
-      throw new Error("Failed to reach the AI service.");
+
+      if (aiResponse.status === 402) {
+        throw new Error("OPENROUTER_CREDITS");
+      }
+
+      throw new Error("OPENROUTER_UNAVAILABLE");
     }
 
     const data = await aiResponse.json();
     const raw = data.choices?.[0]?.message?.content;
 
     if (!raw) {
-      throw new Error("Empty response from the AI.");
+      throw new Error("EMPTY_RESPONSE");
     }
 
-    const cards = extractCardsFromContent(raw);
+    return normalizeCards(extractCardsFromContent(raw));
+  });
+}
 
-    if (!Array.isArray(cards) || cards.length === 0) {
-      throw new Error("AI did not return a valid flashcard list.");
-    }
+async function requestGeminiFlashcards(text) {
+  if (!GEMINI_API_KEY) {
+    throw new Error("GEMINI_KEY_MISSING");
+  }
 
-    return cards.filter(
-      (card) =>
-        card &&
-        typeof card.question === "string" &&
-        typeof card.answer === "string"
+  return withTimeout(async (signal) => {
+    const aiResponse = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          systemInstruction: {
+            parts: [
+              {
+                text: "You are a study aid. Extract 10 key concepts from the user's text and format them as a JSON array of objects. Each object must have a 'question' and 'answer' key. Output ONLY the raw JSON array. Do not include markdown or backticks.",
+              },
+            ],
+          },
+          contents: [
+            {
+              role: "user",
+              parts: [{ text }],
+            },
+          ],
+        }),
+        signal,
+      }
     );
+
+    if (!aiResponse.ok) {
+      const errBody = await aiResponse.text();
+      console.error("Gemini error:", errBody);
+      throw new Error("GEMINI_UNAVAILABLE");
+    }
+
+    const data = await aiResponse.json();
+    const raw =
+      data.candidates?.[0]?.content?.parts
+        ?.map((part) => part.text || "")
+        .join("")
+        .trim() || "";
+
+    if (!raw) {
+      throw new Error("EMPTY_RESPONSE");
+    }
+
+    return normalizeCards(extractCardsFromContent(raw));
+  });
+}
+
+async function requestFlashcards(text, model) {
+  const providerErrors = [];
+
+  try {
+    const cards = await requestOpenRouterFlashcards(text, model);
+    return { cards, provider: "openrouter" };
+  } catch (err) {
+    providerErrors.push(err.message);
+
+    if (
+      ![
+        "OPENROUTER_CREDITS",
+        "OPENROUTER_UNAVAILABLE",
+        "OPENROUTER_KEY_MISSING",
+      ].includes(err.message)
+    ) {
+      throw err;
+    }
+  }
+
+  try {
+    const cards = await requestGeminiFlashcards(text);
+    return { cards, provider: "gemini" };
+  } catch (err) {
+    providerErrors.push(err.message);
+
+    if (err.message === "GEMINI_KEY_MISSING") {
+      throw new Error(
+        "The server has no available AI provider. Configure OpenRouter credits or add GEMINI_API_KEY."
+      );
+    }
+
+    if (err.message === "GEMINI_UNAVAILABLE") {
+      throw new Error(
+        "All configured AI providers are currently unavailable. Please try again later."
+      );
+    }
+
+    throw err;
   } finally {
-    clearTimeout(timeoutId);
+    if (providerErrors.length > 0) {
+      console.log("Provider fallback trail:", providerErrors.join(" -> "));
+    }
   }
 }
 
@@ -173,6 +292,7 @@ app.get("/health", (_req, res) => {
     status: "ok",
     timestamp: new Date().toISOString(),
     hasOpenRouterKey: Boolean(OPENROUTER_API_KEY),
+    hasGeminiKey: Boolean(GEMINI_API_KEY),
     allowedOrigins,
   });
 });
@@ -187,9 +307,9 @@ app.post(
 
     try {
       console.log(`Generating flashcards using model: ${modelToUse}`);
-      const cards = await requestFlashcards(text.trim(), modelToUse);
+      const { cards, provider } = await requestFlashcards(text.trim(), modelToUse);
 
-      return res.json({ cards });
+      return res.json({ cards, provider });
     } catch (err) {
       console.error("Server error:", err);
 
@@ -199,26 +319,23 @@ app.post(
         });
       }
 
-      if (err.message === "Server is missing OPENROUTER_API_KEY.") {
-        return res.status(500).json({
-          error: "The server is missing its AI configuration.",
-        });
-      }
-
       if (
-        err.message === "Failed to reach the AI service." ||
-        err.message === "Empty response from the AI."
-      ) {
-        return res.status(502).json({ error: err.message });
-      }
-
-      if (
+        err.message === "EMPTY_RESPONSE" ||
         err.message === "No JSON array found in model response." ||
         err.message === "AI did not return a valid flashcard list."
       ) {
         return res.status(500).json({
           error: "The AI returned an unexpected response. Please try again.",
         });
+      }
+
+      if (
+        err.message ===
+          "The server has no available AI provider. Configure OpenRouter credits or add GEMINI_API_KEY." ||
+        err.message ===
+          "All configured AI providers are currently unavailable. Please try again later."
+      ) {
+        return res.status(502).json({ error: err.message });
       }
 
       return res.status(500).json({ error: "Internal server error." });

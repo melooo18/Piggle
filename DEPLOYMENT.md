@@ -34,6 +34,12 @@ OPENROUTER_API_KEY=your_openrouter_api_key_here
 FRONTEND_URL=https://your-frontend-domain
 ```
 
+Optional fallback provider:
+
+```env
+GEMINI_API_KEY=your_gemini_api_key_here
+```
+
 After deploy, copy the backend URL. Example:
 
 ```text
@@ -107,3 +113,4 @@ Without this, Google sign-in and email auth can fail on production.
 - The backend uses `FRONTEND_URL` for CORS, so set it to your deployed frontend URL in production.
 - Firebase client config in the frontend is safe to expose publicly, but secrets like `OPENROUTER_API_KEY` must stay only on the backend.
 - Firestore is now used to sync `savedCards` and `studyHistory` across devices for each signed-in user.
+- The backend now tries OpenRouter first and automatically falls back to Gemini when `GEMINI_API_KEY` is configured.
