@@ -947,6 +947,12 @@ button, input, textarea {
   gap: 12px;
 }
 
+.history-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16px;
+}
+
 .history-item {
   display: flex;
   align-items: center;
@@ -989,6 +995,25 @@ button, input, textarea {
 .history-info span {
   font-size: 12px;
   color: var(--neutral-500);
+}
+
+.history-delete-btn {
+  width: 36px;
+  height: 36px;
+  border: 1px solid var(--border-color);
+  background: transparent;
+  color: var(--neutral-500);
+  border-radius: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: var(--transition);
+}
+
+.history-delete-btn:hover {
+  color: #ff6b6b;
+  border-color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.08);
 }
 
 .history-arrow {

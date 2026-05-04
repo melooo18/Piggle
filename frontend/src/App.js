@@ -288,6 +288,14 @@ function App() {
     setActiveTab("dashboard");
   };
 
+  const handleDeleteHistoryItem = (historyId) => {
+    setStudyHistory((prev) => prev.filter((item) => item.id !== historyId));
+  };
+
+  const handleClearHistory = () => {
+    setStudyHistory([]);
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case "dashboard":
@@ -313,7 +321,12 @@ function App() {
         );
       case "history":
         return (
-          <HistoryView studyHistory={studyHistory} openHistoryItem={openHistoryItem} />
+          <HistoryView
+            studyHistory={studyHistory}
+            openHistoryItem={openHistoryItem}
+            deleteHistoryItem={handleDeleteHistoryItem}
+            clearHistory={handleClearHistory}
+          />
         );
       case "saved":
         return (
