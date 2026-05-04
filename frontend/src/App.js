@@ -222,7 +222,11 @@ function App() {
       return;
     }
 
-    const requestPayload = { text: trimmedNotes, model: selectedModel };
+    const requestPayload = {
+      text: trimmedNotes,
+      model: selectedModel,
+      topic: sessionTitle.trim(),
+    };
     setLastRequest(requestPayload);
     setLoading(true);
     setError("");

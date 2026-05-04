@@ -1,5 +1,8 @@
 import React from "react";
 
+const GEMINI_MODEL = "google/gemini-2.0-flash-001";
+const OPENAI_MODEL = "openai/gpt-4o-mini";
+
 function SettingsView({
   selectedModel,
   setSelectedModel,
@@ -7,6 +10,9 @@ function SettingsView({
   setTheme,
   librarySyncing,
 }) {
+  const isGeminiModel = selectedModel.startsWith("google/gemini");
+  const currentModelLabel = isGeminiModel ? "Gemini" : "OpenAI";
+
   return (
     <div className="animate-in">
       <div className="page-header">
@@ -20,7 +26,7 @@ function SettingsView({
             <p style={{ fontSize: "12px", color: "var(--neutral-500)" }}>
               Currently using:{" "}
               <span style={{ color: "var(--primary)", fontWeight: "600" }}>
-                {selectedModel.split("/")[1].toUpperCase()}
+                {currentModelLabel}
               </span>
             </p>
           </div>
@@ -28,9 +34,7 @@ function SettingsView({
             className="btn btn-secondary"
             onClick={() =>
               setSelectedModel((prev) =>
-                prev === "google/gemini-2.0-flash-001"
-                  ? "google/gemini-pro"
-                  : "google/gemini-2.0-flash-001"
+                prev.startsWith("google/gemini") ? OPENAI_MODEL : GEMINI_MODEL
               )
             }
           >

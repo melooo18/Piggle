@@ -46,12 +46,12 @@ function DashboardView({
           </button>
         </div>
 
-        <label htmlFor="session-title">Set Title</label>
+        <label htmlFor="session-title">Topic / Set Title</label>
         <input
           id="session-title"
           className="redesign-textarea"
           style={{ minHeight: "unset", height: "48px", marginBottom: "16px" }}
-          placeholder="Optional title for this flashcard set"
+          placeholder="Optional topic or title, like Photosynthesis or World War II"
           value={sessionTitle}
           onChange={(event) => setSessionTitle(event.target.value)}
         />

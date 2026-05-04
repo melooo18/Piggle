@@ -52,7 +52,7 @@ function rateLimit(req, res, next) {
 }
 
 function validateGeneratePayload(req, res, next) {
-  const { text, model } = req.body ?? {};
+  const { text, model, topic } = req.body ?? {};
 
   if (typeof text !== "string" || text.trim().length === 0) {
     return res.status(400).json({ error: "Please provide study text." });
@@ -68,7 +68,28 @@ function validateGeneratePayload(req, res, next) {
     return res.status(400).json({ error: "Model must be a string." });
   }
 
+  if (topic && typeof topic !== "string") {
+    return res.status(400).json({ error: "Topic must be a string." });
+  }
+
   return next();
+}
+
+function buildFlashcardInstructions(topic) {
+  const topicInstruction =
+    topic && topic.trim().length > 0
+      ? `Focus the flashcards on the topic "${topic.trim()}". Use the user's material only to generate questions and answers that are directly relevant to that topic.`
+      : "Infer the main topic from the user's material and keep every flashcard tightly focused on that topic.";
+
+  return [
+    "You are a study aid.",
+    "Generate between 30 and 40 flashcards as a JSON array of objects.",
+    "Each object must have a 'question' and 'answer' key.",
+    topicInstruction,
+    "Make the questions clear, specific, and varied in difficulty.",
+    "Keep answers concise, accurate, and grounded in the provided material.",
+    "Output ONLY the raw JSON array. Do not include markdown or backticks.",
+  ].join(" ");
 }
 
 function extractCardsFromContent(rawContent) {
@@ -117,7 +138,7 @@ async function withTimeout(requestFactory) {
   }
 }
 
-async function requestOpenRouterFlashcards(text, model) {
+async function requestOpenRouterFlashcards(text, model, topic) {
   if (!OPENROUTER_API_KEY) {
     throw new Error("OPENROUTER_KEY_MISSING");
   }
@@ -136,8 +157,7 @@ async function requestOpenRouterFlashcards(text, model) {
           messages: [
             {
               role: "system",
-              content:
-                "You are a study aid. Extract 10 key concepts from the user's text and format them as a JSON array of objects. Each object must have a 'question' and 'answer' key. Output ONLY the raw JSON array. Do not include markdown or backticks.",
+              content: buildFlashcardInstructions(topic),
             },
             {
               role: "user",
@@ -171,7 +191,7 @@ async function requestOpenRouterFlashcards(text, model) {
   });
 }
 
-async function requestGeminiFlashcards(text) {
+async function requestGeminiFlashcards(text, topic) {
   if (!GEMINI_API_KEY) {
     throw new Error("GEMINI_KEY_MISSING");
   }
@@ -188,7 +208,7 @@ async function requestGeminiFlashcards(text) {
           systemInstruction: {
             parts: [
               {
-                text: "You are a study aid. Extract 10 key concepts from the user's text and format them as a JSON array of objects. Each object must have a 'question' and 'answer' key. Output ONLY the raw JSON array. Do not include markdown or backticks.",
+                text: buildFlashcardInstructions(topic),
               },
             ],
           },
@@ -224,11 +244,11 @@ async function requestGeminiFlashcards(text) {
   });
 }
 
-async function requestFlashcards(text, model) {
+async function requestFlashcards(text, model, topic) {
   const providerErrors = [];
 
   try {
-    const cards = await requestOpenRouterFlashcards(text, model);
+    const cards = await requestOpenRouterFlashcards(text, model, topic);
     return { cards, provider: "openrouter" };
   } catch (err) {
     providerErrors.push(err.message);
@@ -245,7 +265,7 @@ async function requestFlashcards(text, model) {
   }
 
   try {
-    const cards = await requestGeminiFlashcards(text);
+    const cards = await requestGeminiFlashcards(text, topic);
     return { cards, provider: "gemini" };
   } catch (err) {
     providerErrors.push(err.message);
@@ -302,12 +322,16 @@ app.post(
   rateLimit,
   validateGeneratePayload,
   async (req, res) => {
-    const { text, model: requestedModel } = req.body;
+    const { text, model: requestedModel, topic } = req.body;
     const modelToUse = requestedModel || "google/gemini-2.0-flash-001";
 
     try {
       console.log(`Generating flashcards using model: ${modelToUse}`);
-      const { cards, provider } = await requestFlashcards(text.trim(), modelToUse);
+      const { cards, provider } = await requestFlashcards(
+        text.trim(),
+        modelToUse,
+        topic?.trim() || ""
+      );
 
       return res.json({ cards, provider });
     } catch (err) {
