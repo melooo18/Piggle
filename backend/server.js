@@ -86,7 +86,9 @@ function buildFlashcardInstructions(topic) {
     "Generate between 30 and 40 flashcards as a JSON array of objects.",
     "Each object must have a 'question' and 'answer' key.",
     topicInstruction,
-    "Make the questions clear, specific, and varied in difficulty.",
+    "Make the questions Higher-Order Thinking Skills (HOTS) focused.",
+    "Prioritize analysis, application, evaluation, comparison, inference, problem-solving, and explanation over simple memorization.",
+    "Use clear, specific prompts that encourage critical thinking about the topic.",
     "Keep answers concise, accurate, and grounded in the provided material.",
     "Output ONLY the raw JSON array. Do not include markdown or backticks.",
   ].join(" ");
